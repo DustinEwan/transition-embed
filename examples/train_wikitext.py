@@ -1,8 +1,9 @@
 """
 Hello-world example: train a transition-embedding codebook on wikitext-103 with
-a small MLP backbone (no quanta dependency). Verifies the library end-to-end.
+a small MLP transition function (no quanta dependency). Verifies the library
+end-to-end.
 
-For the real usage (a conv-like operator such as KDA), see kda_backbone.py.
+For the real usage (a conv-like operator such as KDA), see conv_transition_fn.py.
 
 Requires: transition-embed[examples]
 Run:
@@ -38,13 +39,13 @@ def wikitext_blocks(n_docs=100_000, batch_size=24, seq_len=256):
 
 def main():
     max_tokens = int(os.environ.get("MAX_TOKENS", 0)) or None
-    # A small MLP backbone (the "weakest" non-identity backbone). Swap in a
-    # conv-like operator (KDA, see kda_backbone.py) for the real usage.
-    backbone = nn.Sequential(
+    # A small MLP transition function (the "weakest" non-identity one). Swap in a
+    # conv-like operator (KDA, see conv_transition_fn.py) for the real usage.
+    transition_fn = nn.Sequential(
         nn.Linear(CODE_DIM, CODE_DIM), nn.SiLU(),
         nn.Linear(CODE_DIM, CODE_DIM), nn.SiLU(),
     )
-    train(backbone, wikitext_blocks(), VOCAB_SIZE, CODE_DIM,
+    train(transition_fn, wikitext_blocks(), VOCAB_SIZE, CODE_DIM,
           out="codebook_wikitext.pt", max_tokens=max_tokens)
 
 

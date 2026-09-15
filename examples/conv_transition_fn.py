@@ -1,16 +1,16 @@
 """
 Example: train a transition-embedding codebook with a self-contained conv-like
-(short-range) backbone. No external backbone dependency — the whole thing is a
+(short-range) transition function. No external dependency — the whole thing is a
 few lines of torch.
 
 The point: the *short-range, causal* inductive bias is what shapes the codes
 into transition-style (not semantic-style) embeddings. Any nn.Module mapping
-(B,T,D) -> (B,T,D) works as the backbone; this is a minimal one.
+(B,T,D) -> (B,T,D) works as the transition function; this is a minimal one.
 
 Requires: transition-embed[examples]
 Run:
-    uv run python examples/conv_backbone.py
-    MAX_TOKENS=1000000 uv run python examples/conv_backbone.py   # smoke
+    uv run python examples/conv_transition_fn.py
+    MAX_TOKENS=1000000 uv run python examples/conv_transition_fn.py   # smoke
 """
 import os
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -24,9 +24,10 @@ CODE_DIM = 512
 VOCAB_SIZE = 151669  # Qwen3
 
 
-class CausalConvBackbone(nn.Module):
-    """A minimal conv-like (short-range) backbone: causal depthwise convs + a
-    mixing MLP. The small, causal kernel is the short-range inductive bias."""
+class CausalConvTransitionFn(nn.Module):
+    """A minimal conv-like (short-range) transition function: causal depthwise
+    convs + a mixing MLP. The small, causal kernel is the short-range
+    inductive bias."""
 
     def __init__(self, code_dim, kernel=4, layers=2):
         super().__init__()
@@ -65,8 +66,8 @@ def wikitext_blocks(n_docs=100_000, batch_size=24, seq_len=256):
 
 def main():
     max_tokens = int(os.environ.get("MAX_TOKENS", 0)) or None
-    backbone = CausalConvBackbone(CODE_DIM, kernel=4, layers=2)
-    train(backbone, wikitext_blocks(), VOCAB_SIZE, CODE_DIM,
+    transition_fn = CausalConvTransitionFn(CODE_DIM, kernel=4, layers=2)
+    train(transition_fn, wikitext_blocks(), VOCAB_SIZE, CODE_DIM,
           out="codebook_conv.pt", max_tokens=max_tokens)
 
 

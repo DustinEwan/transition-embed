@@ -2,14 +2,18 @@
 transition-embed: train a fixed, reusable, tied binary codebook whose bits encode
 short-range next-token *transition* structure (not similarity).
 
-The library is backbone-agnostic: you provide any nn.Module mapping (B,T,D) ->
-(B,T,D) (e.g. a conv-like operator such as KDA); the library trains the tied
-binary embedding + the recipe (weighted CE + stratified VISReg + online unigram
-centering) and exports a compact, portable artifact (1 bit per code).
+The library is transition-function-agnostic: you provide any nn.Module mapping
+(B,T,D) -> (B,T,D) (e.g. a conv-like operator such as KDA); the library trains
+the tied binary embedding + the recipe (weighted CE + stratified VISReg + online
+unigram centering) and exports the two foundational artifacts in one file: the
+compact bitpacked transition embedding (1 bit per code) and the trained
+transition function (state_dict). Downstream tasks (e.g. the V->V' coarsening)
+load both and compute the transition encoding.
 
 Public API:
-    train(backbone, data, vocab_size, code_dim, out, ...)  -> trains + exports
-    Codebook.from_artifact(path)                            -> loads the artifact
+    train(transition_fn, data, vocab_size, code_dim, out, ...)  -> trains + exports
+    Codebook.from_artifact(path)                                -> loads the artifact
+    Codebook.transition_encoding(arch)                          -> (V, D) marginal h
     BinaryTiedEmbedding, StratifiedVISReg, fused_weighted_ce  (the building blocks)
 """
 from .model import CodebookModel, Codebook

@@ -3,20 +3,23 @@
 Train a **fixed, reusable, tied binary codebook** whose bits encode short-range
 next-token **transition** structure — not similarity.
 
-One learned `(V, D)` table serves both the input (raw values) and the output
-(signed, 2-bit interface). The library is **backbone-agnostic**: you provide any
-`nn.Module` mapping `(B, T, D) -> (B, T, D)`; the library trains the tied binary
-embedding with a fixed recipe (weighted CE + stratified VISReg + online unigram
-centering) and exports a compact, portable artifact (1 bit per code).
+One learned `(V, D)` table serves both the input (signed codes) and the output
+(signed, 2-bit interface). The library is **transition-function-agnostic**: you
+provide any `nn.Module` mapping `(B, T, D) -> (B, T, D)`; the library trains the
+tied binary embedding with a fixed recipe (weighted CE + stratified VISReg +
+online unigram centering) and exports the two **foundational** artifacts in one
+file: the compact bitpacked transition embedding (1 bit per code) and the
+trained transition function (state_dict).
 
 ```python
 from transition_embed import train, Codebook
 
-# any (B,T,D) -> (B,T,D) module works as the backbone
-train(backbone, data_iter, vocab_size=151669, code_dim=512, out="codebook.pt")
+# any (B,T,D) -> (B,T,D) module works as the transition function
+train(transition_fn, data_iter, vocab_size=151669, code_dim=512, out="codebook.pt")
 
 cb = Codebook.from_artifact("codebook.pt")
-codes = cb.codes()          # (V, D) signed, unigram-centered (the 2-bit interface)
+codes = cb.codes()                    # (V, D) signed, unigram-centered (the 2-bit interface)
+h = cb.transition_encoding(transition_fn)  # (V, D) marginal transition encoding
 ```
 
 ---
@@ -44,28 +47,29 @@ underlying process is not first-order.
 
 ## Why transition-style, not semantic-style
 
-This is the core of the library, and it generalizes across backbones. Three
+This is the core of the library, and it generalizes across transition functions. Three
 things, in order, make the codes transition-style rather than semantic-style:
 
 1. **The objective is next-token prediction, not similarity.** The codebook is
-   trained to minimize (weighted) next-token cross-entropy through a backbone.
+   trained to minimize (weighted) next-token cross-entropy through a transition function.
    The gradient signal is *"which bits help predict the next token."* So the bits
    are shaped to carry **predictive / transition** information, not **similarity**
    information. Semantic embeddings (word2vec, sentence embeddings, SHADOW-2) are
    trained with a similarity / co-occurrence objective, so they encode
    similarity. Same table, different objective, different structure.
 
-2. **The backbone provides a short-range inductive bias.** You provide a
-   short-range, causal operator (a conv-like backbone). The bias is the *cause*,
-   the structure is the *effect*: a short-range operator forces the codes to carry
-   **bounded, local transition structure**. Crucially, the *reach* — how many
-   tokens the structure extends over — is a property of **the backbone you
-   provide**, not of this library. A different backbone gives a different reach.
-   (This is why we do not quote a specific token count: the reach is
-   backbone-dependent, not a fixed constant of the recipe.)
+2. **The transition function provides a short-range inductive bias.** You
+   provide a short-range, causal operator (a conv-like transition function). The
+   bias is the *cause*, the structure is the *effect*: a short-range operator
+   forces the codes to carry **bounded, local transition structure**. Crucially,
+   the *reach* — how many tokens the structure extends over — is a property of
+   **the transition function you provide**, not of this library. A different
+   transition function gives a different reach. (This is why we do not quote a
+   specific token count: the reach is transition-function-dependent, not a fixed
+   constant of the recipe.)
 
 3. **The tied binary interface + anti-collapse regularization.** The same `(V, D)`
-   table serves both the input (raw) and the output (signed). VISReg keeps *all*
+   table serves both the input (signed) and the output (signed). VISReg keeps *all*
    dimensions active (anti-collapse, not packing), so the codes fill the
    hypercube **coordinate-wise**, not in clusters. The result is a full-rank,
    coordinate-wise-spread code — organized by *transition*, not by *similarity*.
@@ -75,7 +79,7 @@ things, in order, make the codes transition-style rather than semantic-style:
 | | objective | WordSim-353 Spearman | structure |
 |---|---|---|---|
 | **Semantic** (word2vec, SHADOW-2) | similarity / co-occurrence | ~0.6 | near = related |
-| **Transition** (this library) | next-token prediction, short-range backbone | ~0.08 (≈ random) | bits predict *next* |
+| **Transition** (this library) | next-token prediction, short-range transition function | ~0.08 (≈ random) | bits predict *next* |
 
 The "meaning" of the bits is **task-relative**: they are meaningful for
 *predicting the next token over a short window*, not for *measuring similarity*.
@@ -86,8 +90,8 @@ meaningful information; a bounded transition structure is another.
 
 ## The recipe
 
-- **Tied binary interface.** One learned `(V, D)` table. Input = raw values.
-  Output = `sign(raw)`, unigram-centered *by construction* (the unigram-weighted
+- **Tied binary interface.** One learned `(V, D)` table. Input = signed codes
+  (`sign(raw) - c + b_in`); output = `sign(raw)`, unigram-centered *by construction* (the unigram-weighted
   mean of the codes is exactly zero, so the model cannot use the code dimensions
   to predict token frequency; frequency is delegated to the output bias). Gradients
   reach the raw values through a **sign-STE** with a tanh surrogate
@@ -108,15 +112,15 @@ meaningful information; a bounded transition structure is another.
 ## API
 
 ```python
-train(backbone, data, vocab_size, code_dim, out,
+train(transition_fn, data, vocab_size, code_dim, out,
       lr=1e-3, warmup=100, lam_v=0.1, tau=1e-4, gamma=0.5,
       n_slices=64, subsample=2048, cuts=(0.01, 0.10, 0.50),
       ce_chunk=16384, log_every=100, save_every=500_000,
       max_tokens=None, resume=None)
 ```
 
-- `backbone`: `nn.Module` mapping `(B,T,D) -> (B,T,D)`; receives the **raw**
-  embedding (signing is only for the unembed interface).
+- `transition_fn`: `nn.Module` mapping `(B,T,D) -> (B,T,D)`; receives the
+  **signed** codes (`sign(raw) - c + b_in`), matching the trained model.
 - `data`: iterator of `(B, T)` blocks (token ids); done by `StopIteration`.
 - Multi-GPU: run under `torchrun --nproc_per_node=N`; the count is all-reduced
   per step, grads via DDP, and a done-handshake keeps the ranks in lockstep.
@@ -126,29 +130,46 @@ cb = Codebook.from_artifact("codebook.pt")
 cb.codes()      # (V, D) signed, unigram-centered
 cb.signed()     # (V, D) raw sign
 cb.vocab_size, cb.code_dim
+cb.has_transition_fn           # True for foundational-stage artifacts
+h = cb.transition_encoding(arch)  # (V, D) marginal transition encoding
 ```
 
 The artifact is the portable contract: bit-packed sign + centering vector +
-per-token scalars + global scalars. See `ARTIFACT.md` for the bit layout.
+per-token scalars + global scalars + the trained transition function. See
+`ARTIFACT.md` for the bit layout.
+
+---
+
+## Downstream
+
+The two foundational artifacts (the bitpacked transition embedding + the trained
+transition function) are a **general learned transition structure**. The
+transition function is a sequence operator `(B,T,D) -> (B,T,D)`; the marginal
+(`T=1`, no context) slice is what a coarsening uses. `Codebook.transition_encoding(arch)`
+computes that marginal `(V, D)` encoding — the substrate for downstream tasks
+such as the `V -> V'` coarsening (K-means over the encoding, then reroute the
+n-gram table's keys through the learned basis). The library stays general; a
+specific consumer (e.g. an Engram-style n-gram table) is a downstream task, not
+part of the core.
 
 ---
 
 ## Examples
 
-- `examples/train_wikitext.py` — hello-world (small MLP backbone, wikitext-103,
-  Qwen3 tokenizer). No external backbone dependency.
-- `examples/conv_backbone.py` — a self-contained **conv-like (short-range)**
-  backbone (causal depthwise convs + mixing MLP). Shows the inductive bias that
-  shapes the codes into transition-style embeddings.
+- `examples/train_wikitext.py` — hello-world (small MLP transition function,
+  wikitext-103, Qwen3 tokenizer). No external transition-function dependency.
+- `examples/conv_transition_fn.py` — a self-contained **conv-like (short-range)**
+  transition function (causal depthwise convs + mixing MLP). Shows the
+  inductive bias that shapes the codes into transition-style embeddings.
 
-Both are a few lines of torch; swap in any backbone you like.
+Both are a few lines of torch; swap in any transition function you like.
 
 ---
 
 ## Codebooks
 
 `codebooks/` holds trained, ready-to-load artifacts. `codebooks/wikitext103_kda.pt`
-is the reference 512-bit codebook (wikitext-103, KDA backbone) whose transition-style
+is the reference 512-bit codebook (wikitext-103, KDA transition function) whose transition-style
 character was characterized in the project. See `codebooks/README.md` for provenance
 and metrics.
 

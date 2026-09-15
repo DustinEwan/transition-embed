@@ -1,10 +1,18 @@
 """
-Transition-embedding training: binary tied embedding + user backbone.
+Transition-embedding training (the foundational stage): binary tied embedding +
+user transition function.
 
     L = weighted_CE (inverse-frequency) + lam_v * VISReg (stratified, on raw values)
 
-The backbone is a contract: any nn.Module mapping (B,T,D) -> (B,T,D). KDA (quanta)
-is one example; the library is backbone-agnostic.
+The transition function is a contract: any nn.Module mapping (B,T,D) -> (B,T,D).
+KDA (quanta) is one example; the library is transition-function-agnostic. It
+receives the SIGNED codes (sign(raw) - c + b_in), matching the trained model.
+
+The foundational stage exports two self-consistent artifacts in one file:
+  1. the bitpacked transition embedding (1 bit per code)
+  2. the trained transition function (state_dict)
+Downstream tasks (e.g. the V->V' coarsening) load both and compute the
+transition encoding (Codebook.transition_encoding).
 
 Unigram statistics accumulate naively online: a running count, single pass over the
 corpus. Unseen token -> p = 0 -> tail stratum, max weight (long-tail assumption).
@@ -13,7 +21,7 @@ step (cheap; cumulative-mass boundaries are stable once the head is counted).
 
 Usage (single GPU):
     from transition_embed import train
-    train(backbone, data_iter, vocab_size, code_dim, out="codebook.pt")
+    train(transition_fn, data_iter, vocab_size, code_dim, out="codebook.pt")
 
 Usage (2 GPUs, data-parallel; count all-reduced per step, grads via DDP):
     torchrun --nproc_per_node=2 -m transition_embed.examples.train_wikitext
@@ -40,20 +48,22 @@ def make_strata(p: torch.Tensor, cuts) -> list:
     return [order[edges[i]:edges[i + 1]] for i in range(len(cuts) + 1)]
 
 
-def train(backbone, data, vocab_size, code_dim, out,
+def train(transition_fn, data, vocab_size, code_dim, out,
           lr=1e-3, warmup=100, lam_v=0.1, tau=1e-4, gamma=0.5,
           n_slices=64, subsample=2048, cuts=(0.01, 0.10, 0.50),
           ce_chunk=16384, log_every=100, save_every=500_000,
           max_tokens=None, resume=None):
-    """Train a transition-embedding codebook.
+    """Train a transition-embedding codebook (the foundational stage).
 
     Args:
-        backbone: nn.Module mapping (B,T,D) -> (B,T,D); receives the RAW embedding.
+        transition_fn: nn.Module mapping (B,T,D) -> (B,T,D); receives the SIGNED
+            codes (sign(raw) - c + b_in), matching the trained model.
         data: iterator of (B,T) blocks (torch.Tensor of token ids); signals done by
             raising StopIteration. All blocks must share one shape.
         vocab_size: V
         code_dim: D (e.g. 512)
-        out: output artifact path
+        out: output artifact path (holds both the bitpacked embedding and the
+            transition-function weights)
         lr, warmup, lam_v, tau, gamma, n_slices, subsample, cuts, ce_chunk,
         log_every, save_every, max_tokens, resume: training config (defaults match
         the reference recipe).
@@ -71,8 +81,8 @@ def train(backbone, data, vocab_size, code_dim, out,
             print(msg, flush=True)
 
     log(f"vocab={vocab_size:,}  rank={rank}/{world}  device={dev}")
-    backbone = backbone.to(dev)
-    model = CodebookModel(vocab_size, code_dim, backbone).to(dev)
+    transition_fn = transition_fn.to(dev)
+    model = CodebookModel(vocab_size, code_dim, transition_fn).to(dev)
     if world > 1:
         # broadcast_buffers=False: embedding.p is updated manually from the synced count
         model = torch.nn.parallel.DistributedDataParallel(
@@ -206,6 +216,8 @@ def train(backbone, data, vocab_size, code_dim, out,
                 "out_bias": mm.embedding.out_bias.cpu(),
                 "alpha": mm.embedding.log_alpha.exp().cpu(),
                 "unigram_p": p.cpu(),
+                # artifact 2: the trained transition function (state_dict)
+                "transition_fn": mm.transition_fn.state_dict(),
             }
         torch.save(artifact, out)
         sz = os.path.getsize(out) / 1e6
