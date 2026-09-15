@@ -13,6 +13,7 @@ uv.lock
 *.pt
 *.ckpt
 !tests/*.pt
+!codebooks/*.pt
 
 # HF / datasets cache
 .cache/

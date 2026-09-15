@@ -145,6 +145,21 @@ Both are a few lines of torch; swap in any backbone you like.
 
 ---
 
+## Codebooks
+
+`codebooks/` holds trained, ready-to-load artifacts. `codebooks/wikitext103_kda.pt`
+is the reference 512-bit codebook (wikitext-103, KDA backbone) whose transition-style
+character was characterized in the project. See `codebooks/README.md` for provenance
+and metrics.
+
+```python
+from transition_embed import Codebook
+cb = Codebook.from_artifact("codebooks/wikitext103_kda.pt")
+codes = cb.codes()   # (151669, 512) signed, unigram-centered
+```
+
+---
+
 ## Install
 
 ```bash
