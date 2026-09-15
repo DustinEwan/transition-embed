@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+
+# uv
+uv.lock
+
+# torch / training artifacts
+*.pt
+*.ckpt
+!tests/*.pt
+
+# HF / datasets cache
+.cache/
+*.log
+
+# IDE
+.idea/
+.vscode/
