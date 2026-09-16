@@ -55,8 +55,7 @@ things, in order, make the codes transition-style rather than semantic-style:
    trained to minimize (weighted) next-token cross-entropy through a transition function.
    The gradient signal is *"which bits help predict the next token."* So the bits
    are shaped to carry **predictive / transition** information, not **similarity**
-   information. Semantic embeddings (word2vec, sentence embeddings, SHADOW-2 —
-   a quantized transformer that uses 512-bit *semantic* codes) are
+   information. Semantic embeddings (word2vec, sentence embeddings) are
    trained with a similarity / co-occurrence objective, so they encode
    similarity. Same table, different objective, different structure.
 
@@ -80,7 +79,7 @@ things, in order, make the codes transition-style rather than semantic-style:
 
 | | objective | WordSim-353 Spearman | structure |
 |---|---|---|---|
-| **Semantic** (word2vec, SHADOW-2) | similarity / co-occurrence | ~0.6 | near = related |
+| **Semantic** (word2vec, sentence embeddings) | similarity / co-occurrence | ~0.6 | near = related |
 | **Transition** (this library) | next-token prediction, short-range transition function | ~0.08 (≈ random) | bits predict *next* |
 
 The "meaning" of the bits is **task-relative**: they are meaningful for

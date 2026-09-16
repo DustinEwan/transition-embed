@@ -22,7 +22,7 @@ characterized in the project.
 
 | probe | result | reading |
 |---|---|---|
-| WordSim-353 Spearman | 0.085 (≈ random 0.041) | **not semantic** (SHADOW-2: 0.619) |
+| WordSim-353 Spearman | 0.085 (≈ random 0.041) | **not semantic** |
 | MLP bigram (frozen emb) | wCE 7.2 (90% of the full-model gain) | **static / per-token**, not contextual |
 | 5-gram conv | past 4 tokens → ~2.1 nats | **short-range** n-gram info |
 | Linear probe (free W) | wCE 8.92 ≫ MLP 7.2 | the transition is **nonlinear** in the code |
