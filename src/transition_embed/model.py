@@ -194,15 +194,30 @@ class Codebook:
 
 def save_families(path: str, families: torch.Tensor, centroids: torch.Tensor,
                   K: int, seed: int = 0, iters: int = 10):
-    """Persist a family discovery: the Dict[V, V'] mapping (families, ~1.2 MB
-    at V=151,669) + the (K, D) centroids + the run params."""
+    """Persist a family discovery. `.pt` (default): the Dict[V, V'] mapping
+    (~1.2 MB at V=151,669) + the (K, D) centroids + the run params. `.json`:
+    the mapping + run params as a plain object (no torch needed to read it;
+    the mapping is just V integers — load into a tensor if you want it on
+    GPU). Centroids are pt-only."""
+    if path.endswith(".json"):
+        import json
+        with open(path, "w") as f:
+            json.dump({"K": K, "seed": seed, "iters": iters,
+                       "families": families.detach().cpu().tolist()}, f)
+        return
     torch.save({"families": families.detach().cpu(),
                 "centroids": centroids.detach().cpu(),
                 "K": K, "seed": seed, "iters": iters}, path)
 
 
 def load_families(path: str):
-    """Load a save_families file. Returns (families (V,), centroids (K, D), meta)."""
+    """Load a save_families file. Returns (families (V,), centroids (K, D) or
+    None for .json, meta)."""
+    if path.endswith(".json"):
+        import json
+        with open(path) as f:
+            d = json.load(f)
+        return torch.tensor(d["families"], dtype=torch.long), None, d
     d = torch.load(path)
     return d["families"], d["centroids"], d
 
@@ -259,6 +274,9 @@ def _self_check():
     save_families("/tmp/_te_fams.pt", fam, Cb, 16)
     f2, c2, meta = load_families("/tmp/_te_fams.pt")
     assert (f2 == fam).all() and (c2 == Cb).all() and meta["K"] == 16
+    save_families("/tmp/_te_fams.json", fam, Cb, 16)
+    f3, c3, meta3 = load_families("/tmp/_te_fams.json")
+    assert (f3 == fam).all() and c3 is None and meta3["K"] == 16
     print(f"model self-check: OK ({sum(p.numel() for p in m.parameters()):,} params at V={V}, {dev})")
 
 
