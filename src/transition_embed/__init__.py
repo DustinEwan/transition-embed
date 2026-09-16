@@ -16,7 +16,7 @@ Public API:
     Codebook.transition_encoding(arch)                          -> (V, D) marginal h
     Codebook.discover_families(arch, K)                        -> (families (V,), centroids (K, D))
     save_families / load_families                              -> persist the Dict[V, V']
-    FamilyMap(path).map(ids)                                  -> token ids -> family ids (gather)
+    FamilyMap(path).map(ids)                                  -> token ids -> family ids (CPU, beside the table)
     BinaryTiedEmbedding, StratifiedVISReg, fused_weighted_ce  (the building blocks)
 """
 from .model import CodebookModel, Codebook, kmeans, save_families, load_families, FamilyMap
