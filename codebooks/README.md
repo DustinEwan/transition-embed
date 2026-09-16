@@ -40,3 +40,14 @@ from transition_embed import Codebook
 cb = Codebook.from_artifact("codebooks/wikitext103_kda.pt")
 codes = cb.codes()   # (151669, 512) signed, unigram-centered
 ```
+
+### Provenance caveat: missing transition function
+
+This artifact was exported **before** the trainer was fixed to persist the
+transition function, so it carries the embedding only (`has_transition_fn ==
+False`). The final 124M-token KDA weights were never saved. The
+self-consistent (embedding, KDA) pair is available from the 62M-token
+checkpoint (`codebook_ckpt.pt` in the quanta repo, the resume prefix of this
+run) — valid for downstream work, half-trained relative to this embedding.
+A full retrain with the current trainer (which persists both artifacts) is the
+fix; until then, `discover_families` on this file will raise.

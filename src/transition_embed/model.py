@@ -55,6 +55,37 @@ class CodebookModel(nn.Module):
         return self.embedding.unembed(self.forward(idx))
 
 
+def kmeans(X: torch.Tensor, K: int, iters: int = 10, chunk: int = 4096,
+           seed: int = 0):
+    """GPU K-means on a (V, D) tensor. Lloyd's algorithm; the assignment step
+    (the (V, K) distance matrix) is chunked over V so only a (chunk, K) block is
+    materialized. Returns (assign (V,) int64, centroids (K, D)). K >= V ->
+    identity (every row is its own cluster)."""
+    Vn, Dn = X.shape
+    if K >= Vn:
+        return torch.arange(Vn, device=X.device), X.clone()
+    g = torch.Generator(device=X.device).manual_seed(seed)
+    C = X[torch.randperm(Vn, generator=g, device=X.device)[:K]].clone()
+    x2 = (X ** 2).sum(1)
+    assign = torch.empty(Vn, dtype=torch.long, device=X.device)
+    for _ in range(iters):
+        c2 = (C ** 2).sum(1)
+        for s in range(0, Vn, chunk):
+            e = min(s + chunk, Vn)
+            d = x2[s:e][:, None] + c2[None, :] - 2.0 * (X[s:e] @ C.T)
+            assign[s:e] = d.argmin(1)
+        Cnew = torch.zeros_like(C)
+        Cnew.index_add_(0, assign, X)
+        cnt = torch.bincount(assign, minlength=K).to(C.dtype)
+        empty = (cnt == 0).nonzero().flatten()
+        if empty.numel():
+            Cnew[empty] = X[torch.randint(0, Vn, (empty.numel(),),
+                                         device=X.device, generator=g)]
+            cnt[empty] = 1.0
+        C = Cnew / cnt[:, None]
+    return assign, C
+
+
 class Codebook:
     """A trained transition-embedding artifact: the bitpacked tied table (the
     transition embedding) + the transition-function weights.
@@ -136,6 +167,17 @@ class Codebook:
                 h[s:e] = tfn(x[s:e].unsqueeze(1)).squeeze(1)
         return h
 
+    def discover_families(self, arch, K: int, iters: int = 10,
+                         chunk: int = 4096, seed: int = 0, device=None):
+        """Level-1 transition family discovery: K-means on the marginal
+        transition encoding. Returns (families (V,) int64, centroids (K, D)) —
+        `families[i]` is the transition family (behavioral equivalence class)
+        token i belongs to; it is the Dict[V, V'] coarsening (e.g. for Engram
+        token normalization). `arch` is an instance of the foundational
+        transition-function architecture."""
+        h = self.transition_encoding(arch, chunk=chunk, device=device)
+        return kmeans(h, K, iters=iters, chunk=chunk, seed=seed)
+
     def save(self, path):
         d = {"bits": self.bits, "c": self.c, "in_bias": self.in_bias,
              "out_bias": self.out_bias, "alpha": self.alpha,
@@ -177,6 +219,23 @@ def _self_check():
     h = cb.transition_encoding(nn.Sequential(nn.Linear(D, D), nn.Tanh(), nn.Linear(D, D)))
     assert h.shape == (V, D), f"transition encoding shape {h.shape}"
     assert torch.isfinite(h).all(), "transition encoding not finite"
+    # kmeans: recovers 3 well-separated clusters; K >= V -> identity
+    torch.manual_seed(0)
+    mu = torch.tensor([[0., 0.], [10., 10.], [-10., 10.]])
+    lab = torch.randint(0, 3, (300,))
+    X = mu[lab] + 0.1 * torch.randn(300, 2)
+    a, C = kmeans(X, 3, iters=10)
+    assert a.max().item() == 2 and a.min().item() == 0, "3 clusters not all used"
+    assert C.shape == (3, 2)
+    for t in range(3):
+        sub = torch.arange(300)[lab == t]
+        assert a[sub].unique().numel() == 1, f"true cluster {t} split"
+    a_id, C_id = kmeans(X, 300)
+    assert (a_id == torch.arange(300, device=X.device)).all(), "K>=V not identity"
+    # discover_families end-to-end (level 1)
+    fam, Cb = cb.discover_families(nn.Sequential(nn.Linear(D, D), nn.Tanh(), nn.Linear(D, D)), 16)
+    assert fam.shape == (V,) and Cb.shape == (16, D)
+    assert fam.max().item() < 16 and torch.isfinite(Cb).all()
     print(f"model self-check: OK ({sum(p.numel() for p in m.parameters()):,} params at V={V}, {dev})")
 
 

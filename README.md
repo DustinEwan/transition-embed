@@ -148,9 +148,15 @@ transition function is a sequence operator `(B,T,D) -> (B,T,D)`; the marginal
 (`T=1`, no context) slice is what a coarsening uses. `Codebook.transition_encoding(arch)`
 computes that marginal `(V, D)` encoding — the substrate for downstream tasks
 such as the `V -> V'` coarsening (K-means over the encoding, then reroute the
-n-gram table's keys through the learned basis). The library stays general; a
-specific consumer (e.g. an Engram-style n-gram table) is a downstream task, not
-part of the core.
+n-gram table's keys through the learned basis). `Codebook.discover_families(arch, K)`
+does exactly that: level-1 **transition family discovery** — K-means over the
+marginal encoding, returning `(families (V,), centroids (K, D))`. `families`
+is the `Dict[V, V']` coarsening: token id -> transition family (behavioral
+equivalence class). One consumer is Engram-style token normalization (reroute
+the n-gram table's keys through the learned basis); others are tokenizer design
+and morphology discovery for languages where hand-rolled normalization rules
+fail. The library stays general; a specific consumer (e.g. an Engram-style
+n-gram table) is a downstream task, not part of the core.
 
 ---
 
@@ -161,6 +167,8 @@ part of the core.
 - `examples/conv_transition_fn.py` — a self-contained **conv-like (short-range)**
   transition function (causal depthwise convs + mixing MLP). Shows the
   inductive bias that shapes the codes into transition-style embeddings.
+- `examples/discover_families.py` — level-1 transition family discovery on a
+  trained artifact (self-contained demo without one).
 
 Both are a few lines of torch; swap in any transition function you like.
 
