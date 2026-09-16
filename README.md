@@ -3,13 +3,14 @@
 Train a **fixed, reusable, tied binary codebook** whose bits encode short-range
 next-token **transition** structure — not similarity.
 
-One learned `(V, D)` table serves both the input (signed codes) and the output
-(signed, 2-bit interface). The library is **transition-function-agnostic**: you
-provide any `nn.Module` mapping `(B, T, D) -> (B, T, D)`; the library trains the
-tied binary embedding with a fixed recipe (weighted CE + stratified VISReg +
-online unigram centering) and exports the two **foundational** artifacts in one
-file: the compact bitpacked transition embedding (1 bit per code) and the
-trained transition function (state_dict).
+"Tied": one learned `(V, D)` table serves both the input (signed codes) and
+the output (signed, 2-bit interface). The library is **transition-function-
+agnostic**: you provide any `nn.Module` mapping `(B, T, D) -> (B, T, D)`; the
+library trains the tied binary embedding with a fixed recipe (weighted CE +
+stratified VISReg + online unigram centering) and exports the two **
+foundational** artifacts in one file — "foundational" meaning the base stage
+that downstream tasks build on: the compact bitpacked transition embedding
+(1 bit per code) and the trained transition function (state_dict).
 
 ```python
 from transition_embed import train, Codebook
@@ -54,7 +55,8 @@ things, in order, make the codes transition-style rather than semantic-style:
    trained to minimize (weighted) next-token cross-entropy through a transition function.
    The gradient signal is *"which bits help predict the next token."* So the bits
    are shaped to carry **predictive / transition** information, not **similarity**
-   information. Semantic embeddings (word2vec, sentence embeddings, SHADOW-2) are
+   information. Semantic embeddings (word2vec, sentence embeddings, SHADOW-2 —
+   a quantized transformer that uses 512-bit *semantic* codes) are
    trained with a similarity / co-occurrence objective, so they encode
    similarity. Same table, different objective, different structure.
 
@@ -140,23 +142,62 @@ per-token scalars + global scalars + the trained transition function. See
 
 ---
 
-## Downstream
+## Downstream: from the codebook to transition families
 
-The two foundational artifacts (the bitpacked transition embedding + the trained
-transition function) are a **general learned transition structure**. The
-transition function is a sequence operator `(B,T,D) -> (B,T,D)`; the marginal
-(`T=1`, no context) slice is what a coarsening uses. `Codebook.transition_encoding(arch)`
-computes that marginal `(V, D)` encoding — the substrate for downstream tasks
-such as the `V -> V'` coarsening (K-means over the encoding, then reroute the
-n-gram table's keys through the learned basis). `Codebook.discover_families(arch, K)`
-does exactly that: level-1 **transition family discovery** — K-means over the
-marginal encoding, returning `(families (V,), centroids (K, D))`. `families`
-is the `Dict[V, V']` coarsening: token id -> transition family (behavioral
-equivalence class). One consumer is Engram-style token normalization (reroute
-the n-gram table's keys through the learned basis); others are tokenizer design
-and morphology discovery for languages where hand-rolled normalization rules
-fail. The library stays general; a specific consumer (e.g. an Engram-style
-n-gram table) is a downstream task, not part of the core.
+The two artifacts are a **general learned transition structure**. The most
+useful thing you can compute from them is the **marginal transition encoding**:
+for each token, what the transition function says about *where that token goes
+next* with no context. (The full transition function is a sequence operator
+over `(B, T, D)`; the encoding uses its `T=1`, no-context slice.)
+
+```python
+h = cb.transition_encoding(arch)   # (V, D) — one "next-token behavior" signature per token
+```
+
+Tokens whose signatures are close **behave the same**: given the token, they
+lead to (nearly) the same next-token distribution. That is a *behavioral*
+equivalence — a forward property (*where the token goes*), not a semantic one
+(*what the token means*). It is intrinsic to the transition encoding; a
+semantic embedding (a *backward* property: what tends to come *before* the
+token) does not carry it.
+
+### Coarsening: V → V′ (transition families)
+
+An **n-gram table** — as in Engram, DeepSeek's context module: a large,
+CPU-resident lookup that maps recent token n-grams to vectors — is indexed by
+raw token IDs. But many tokens behave identically, so a row per token ID
+wastes space and splits behavior that should be shared. **Coarsening** fixes
+that: map each token to one of K **transition families** (behavioral
+equivalence classes), and let tokens in the same family share a table row. The
+table's keys are re-expressed through the learned mapping — a change of basis
+that requires no hand-rolled rules.
+
+```python
+fam, C = cb.discover_families(arch, K)   # K-means over the encoding
+# fam: (V,) int — token id -> family id (the Dict[V, V'])
+# C:   (K, D) — the family centroids
+```
+
+K-means over the encoding is the practical, rule-free partition. Its primary
+value is **discovery**: it finds which tokens lead to the same next-token
+distribution — the overlaps that hand-rolled rules (casefolding, whitespace,
+inflectional endings) find in English, and the ones hand-rolled rules *cannot*
+find, e.g. in agglutinative languages (Korean, Japanese) where the
+normalization rules do not exist. Compressing an n-gram table's keys is one
+consequence; tokenizer design and morphology discovery are others.
+
+### Persisting and using the mapping
+
+```python
+save_families("families.json", fam, C, K)   # or discover_families(..., out=...)
+fm = FamilyMap("families.json")             # static integer lookup, lives on the CPU
+fam_ids = fm.map(token_ids)                # beside the (CPU) n-gram table
+fm.to("cuda")                              # for training, beside the model
+```
+
+The mapping is the deployed artifact: V integers (~1.2 MB at V=151,669), one
+gather, no model at runtime. The library stays general; a specific consumer
+(e.g. an Engram-style n-gram table) is a downstream task, not part of the core.
 
 ---
 
@@ -177,9 +218,8 @@ Both are a few lines of torch; swap in any transition function you like.
 ## Codebooks
 
 `codebooks/` holds trained, ready-to-load artifacts. `codebooks/wikitext103_kda.pt`
-is the reference 512-bit codebook (wikitext-103, KDA transition function) whose transition-style
-character was characterized in the project. See `codebooks/README.md` for provenance
-and metrics.
+is the reference 512-bit codebook (wikitext-103, KDA transition function).
+See `codebooks/README.md` for its characterization metrics.
 
 ```python
 from transition_embed import Codebook
