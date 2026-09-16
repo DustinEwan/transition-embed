@@ -168,15 +168,20 @@ class Codebook:
         return h
 
     def discover_families(self, arch, K: int, iters: int = 10,
-                         chunk: int = 4096, seed: int = 0, device=None):
+                         chunk: int = 4096, seed: int = 0, device=None,
+                         out: str | None = None):
         """Level-1 transition family discovery: K-means on the marginal
         transition encoding. Returns (families (V,) int64, centroids (K, D)) —
         `families[i]` is the transition family (behavioral equivalence class)
         token i belongs to; it is the Dict[V, V'] coarsening (e.g. for Engram
         token normalization). `arch` is an instance of the foundational
-        transition-function architecture."""
+        transition-function architecture. `out` persists the result
+        (save_families)."""
         h = self.transition_encoding(arch, chunk=chunk, device=device)
-        return kmeans(h, K, iters=iters, chunk=chunk, seed=seed)
+        fam, C = kmeans(h, K, iters=iters, chunk=chunk, seed=seed)
+        if out is not None:
+            save_families(out, fam, C, K, seed=seed, iters=iters)
+        return fam, C
 
     def save(self, path):
         d = {"bits": self.bits, "c": self.c, "in_bias": self.in_bias,
@@ -185,6 +190,21 @@ class Codebook:
         if self.transition_fn_weights is not None:
             d["transition_fn"] = self.transition_fn_weights
         torch.save(d, path)
+
+
+def save_families(path: str, families: torch.Tensor, centroids: torch.Tensor,
+                  K: int, seed: int = 0, iters: int = 10):
+    """Persist a family discovery: the Dict[V, V'] mapping (families, ~1.2 MB
+    at V=151,669) + the (K, D) centroids + the run params."""
+    torch.save({"families": families.detach().cpu(),
+                "centroids": centroids.detach().cpu(),
+                "K": K, "seed": seed, "iters": iters}, path)
+
+
+def load_families(path: str):
+    """Load a save_families file. Returns (families (V,), centroids (K, D), meta)."""
+    d = torch.load(path)
+    return d["families"], d["centroids"], d
 
 
 def _self_check():
@@ -232,10 +252,13 @@ def _self_check():
         assert a[sub].unique().numel() == 1, f"true cluster {t} split"
     a_id, C_id = kmeans(X, 300)
     assert (a_id == torch.arange(300, device=X.device)).all(), "K>=V not identity"
-    # discover_families end-to-end (level 1)
+    # discover_families end-to-end (level 1) + persistence round-trip
     fam, Cb = cb.discover_families(nn.Sequential(nn.Linear(D, D), nn.Tanh(), nn.Linear(D, D)), 16)
     assert fam.shape == (V,) and Cb.shape == (16, D)
     assert fam.max().item() < 16 and torch.isfinite(Cb).all()
+    save_families("/tmp/_te_fams.pt", fam, Cb, 16)
+    f2, c2, meta = load_families("/tmp/_te_fams.pt")
+    assert (f2 == fam).all() and (c2 == Cb).all() and meta["K"] == 16
     print(f"model self-check: OK ({sum(p.numel() for p in m.parameters()):,} params at V={V}, {dev})")
 
 

@@ -1,6 +1,6 @@
 """Level-1 transition family discovery on a trained artifact.
 
-    python examples/discover_families.py [artifact.pt] [K]
+    python examples/discover_families.py [artifact.pt] [K] [out.pt]
 
 Without an artifact, runs a small self-contained demo (random weights, V=4096,
 MLP transition function). For a real artifact, `arch` must be an instance of
@@ -21,7 +21,7 @@ def arch_mlp(d):
     return nn.Sequential(nn.Linear(d, d), nn.Tanh(), nn.Linear(d, d))
 
 
-def main(artifact=None, K=64):
+def main(artifact=None, K=64, out=None):
     if artifact is None:  # self-contained demo
         torch.manual_seed(0)
         V, D = 4096, 64
@@ -38,7 +38,7 @@ def main(artifact=None, K=64):
         cb = Codebook.from_artifact(artifact)
         print(f"[artifact] {artifact}: V={cb.vocab_size}, D={cb.code_dim}")
 
-    fam, C = cb.discover_families(arch_mlp(cb.code_dim), K)
+    fam, C = cb.discover_families(arch_mlp(cb.code_dim), K, out=out)
     sizes = torch.bincount(fam, minlength=fam.max().item() + 1)
     print(f"K={K}  families used={sizes.numel()}  "
           f"size min/median/max={sizes.min().item()}/{sizes.median().item()}/{sizes.max().item()}")
@@ -49,4 +49,5 @@ def main(artifact=None, K=64):
 if __name__ == "__main__":
     a = sys.argv[1] if len(sys.argv) > 1 else None
     k = int(sys.argv[2]) if len(sys.argv) > 2 else 64
-    main(a, k)
+    o = sys.argv[3] if len(sys.argv) > 3 else None
+    main(a, k, o)
