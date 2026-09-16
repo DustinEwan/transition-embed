@@ -16,9 +16,10 @@ Public API:
     Codebook.transition_encoding(arch)                          -> (V, D) marginal h
     Codebook.discover_families(arch, K)                        -> (families (V,), centroids (K, D))
     save_families / load_families                              -> persist the Dict[V, V']
+    FamilyMap(path).map(ids)                                  -> token ids -> family ids (gather)
     BinaryTiedEmbedding, StratifiedVISReg, fused_weighted_ce  (the building blocks)
 """
-from .model import CodebookModel, Codebook, kmeans, save_families, load_families
+from .model import CodebookModel, Codebook, kmeans, save_families, load_families, FamilyMap
 from .embedding import BinaryTiedEmbedding, SignSTE
 from .visreg import StratifiedVISReg
 from .fused_ce import FusedWeightedCE, fused_weighted_ce
@@ -31,6 +32,7 @@ __all__ = [
     "kmeans",
     "save_families",
     "load_families",
+    "FamilyMap",
     "BinaryTiedEmbedding",
     "SignSTE",
     "StratifiedVISReg",

@@ -222,6 +222,38 @@ def load_families(path: str):
     return d["families"], d["centroids"], d
 
 
+class FamilyMap:
+    """A loaded Dict[V, V'] coarsening (from a save_families file). The
+    deployed artifact: a static integer lookup, zero model at runtime.
+    `map(ids)` (or `fm(ids)`) -> the family id for each token id; a single
+    gather, on whatever device `ids` is on."""
+
+    def __init__(self, path=None, families=None, K=None):
+        if path is not None:
+            if path.endswith(".json"):
+                import json
+                with open(path) as f:
+                    d = json.load(f)
+                families, K = d["families"], d.get("K")
+            else:
+                d = torch.load(path)
+                families, K = d["families"].tolist(), d.get("K")
+        if families is None:
+            raise ValueError("path or families required")
+        self.families = torch.as_tensor(families, dtype=torch.long)
+        self.K = K if K is not None else int(self.families.max().item() + 1)
+        self._cache = {}
+
+    def map(self, ids):
+        t = self._cache.get(ids.device)
+        if t is None:
+            t = self._cache[ids.device] = self.families.to(ids.device)
+        return t[ids]
+
+    def __call__(self, ids):
+        return self.map(ids)
+
+
 def _self_check():
     torch.manual_seed(0)
     V, D = 1024, 64
@@ -277,6 +309,12 @@ def _self_check():
     save_families("/tmp/_te_fams.json", fam, Cb, 16)
     f3, c3, meta3 = load_families("/tmp/_te_fams.json")
     assert (f3 == fam).all() and c3 is None and meta3["K"] == 16
+    # FamilyMap: load from json, map on cpu (+ cuda)
+    fm = FamilyMap("/tmp/_te_fams.json")
+    ids = torch.tensor([[0, 1, 2], [3, 4, 5]])
+    assert (fm.map(ids) == fm.families[ids]).all() and fm.K == 16
+    if torch.cuda.is_available():
+        assert (fm(ids.cuda()) == fm.families.cuda()[ids]).all()
     print(f"model self-check: OK ({sum(p.numel() for p in m.parameters()):,} params at V={V}, {dev})")
 
 
