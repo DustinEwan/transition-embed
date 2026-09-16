@@ -248,6 +248,11 @@ class FamilyMap:
     def map(self, ids):
         return self.families[ids.to(self.families.device)]
 
+    def to(self, device):
+        """Move the mapping (e.g. to the GPU for training)."""
+        self.families = self.families.to(device)
+        return self
+
     def __call__(self, ids):
         return self.map(ids)
 
@@ -315,6 +320,10 @@ def _self_check():
     if torch.cuda.is_available():
         r = fm(ids.cuda())
         assert r.device.type == "cpu" and (r == fm.families[ids]).all()
+        fm.to("cuda")
+        r2 = fm.map(ids.cuda())
+        assert r2.device.type == "cuda" and (r2 == fm.families[ids]).all()
+        fm.to("cpu")
     print(f"model self-check: OK ({sum(p.numel() for p in m.parameters()):,} params at V={V}, {dev})")
 
 
